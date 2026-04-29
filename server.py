@@ -19,25 +19,26 @@ import base64
 import io
 import hashlib
 import hmac
+import os
 from datetime import datetime, timedelta
 from supabase import create_client
 
 app = Flask(__name__)
-app.secret_key = "change-this-to-something-random"
+app.secret_key = os.environ.get("FLASK_SECRET", "change-this-to-something-random")
 CORS(app)
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CONFIG — fill these in, never share this file publicly
+#  CONFIG — set these as environment variables in Render dashboard
 # ══════════════════════════════════════════════════════════════════════════════
-SUPABASE_URL          = "https://khiessgotchgmcykxner.supabase.co"
-SUPABASE_KEY          = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtoaWVzc2dvdGNoZ21jeWt4bmVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0MDU4NzMsImV4cCI6MjA5Mjk4MTg3M30.i3AWFGsnPL8LO5-GYDsW-yH7TQIEMsktxAERtPD40kY"
-ANTHROPIC_API_KEY     = "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"
-NOWPAYMENTS_API_KEY   = "YOUR_NOWPAYMENTS_API_KEY"
-NOWPAYMENTS_IPN_SECRET = "YOUR_NOWPAYMENTS_IPN_SECRET"  # set in NOWPayments dashboard
-JWT_SECRET            = "f8xK2mP9qW3nJ6vL1tR7yB4cE0uA5hD"
-ADMIN_PASSWORD        = "HN9n4twAJj53sJT$"
-VENMO_HANDLE          = "@your-venmo-handle"
-YOUR_DOMAIN           = "http://localhost:5000"  # update when deployed
+SUPABASE_URL           = os.environ.get("SUPABASE_URL", "YOUR_SUPABASE_URL")
+SUPABASE_KEY           = os.environ.get("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
+ANTHROPIC_API_KEY      = os.environ.get("ANTHROPIC_API_KEY", "YOUR_ANTHROPIC_KEY")
+NOWPAYMENTS_API_KEY    = os.environ.get("NOWPAYMENTS_API_KEY", "")
+NOWPAYMENTS_IPN_SECRET = os.environ.get("NOWPAYMENTS_IPN_SECRET", "")
+JWT_SECRET             = os.environ.get("JWT_SECRET", "change-this")
+ADMIN_PASSWORD         = os.environ.get("ADMIN_PASSWORD", "change-this")
+VENMO_HANDLE           = os.environ.get("VENMO_HANDLE", "@your-venmo-handle")
+YOUR_DOMAIN            = os.environ.get("YOUR_DOMAIN", "http://localhost:5000")
 
 # Credit packs
 CREDIT_PACKS = {
@@ -198,6 +199,49 @@ Rules:
 
 
 # ── NOWPayments crypto ─────────────────────────────────────────────────────────
+
+@app.route("/create-crypto-payment-guest", methods=["POST"])
+def create_crypto_payment_guest():
+    body  = request.json or {}
+    email = (body.get("email") or "").strip().lower()
+    pack  = body.get("pack")
+
+    if not email:
+        return err("Email required")
+    if pack not in CREDIT_PACKS:
+        return err("Invalid pack")
+
+    # Check user exists
+    res = db.table("users").select("id").eq("email", email).execute()
+    if not res.data:
+        return err("No account found with that email. Please register in the app first.")
+
+    user_id = res.data[0]["id"]
+    p       = CREDIT_PACKS[pack]
+
+    payload = {
+        "price_amount":     p["price"],
+        "price_currency":   "usd",
+        "pay_currency":     "usdttrc20",
+        "order_id":         f"{user_id}:{pack}",
+        "order_description": f"SnapTutor {p['label']}",
+        "ipn_callback_url": YOUR_DOMAIN + "/nowpayments-webhook",
+        "success_url":      YOUR_DOMAIN + "/?payment=success",
+        "cancel_url":       YOUR_DOMAIN + "/?payment=cancel",
+    }
+
+    res2 = requests.post(
+        "https://api.nowpayments.io/v1/invoice",
+        json=payload,
+        headers={"x-api-key": NOWPAYMENTS_API_KEY}
+    )
+
+    if res2.status_code != 200:
+        return err("Failed to create payment: " + res2.text)
+
+    data = res2.json()
+    return ok({"url": data["invoice_url"]})
+
 
 @app.route("/create-crypto-payment", methods=["POST"])
 def create_crypto_payment():
