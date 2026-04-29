@@ -198,6 +198,138 @@ Rules:
         return err(f"AI error: {str(e)}")
 
 
+# ── Referral system ────────────────────────────────────────────────────────────
+
+@app.route("/apply-referral", methods=["POST"])
+def apply_referral():
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+
+    body = request.json or {}
+    code = (body.get("code") or "").strip().upper()
+
+    if not code:
+        return err("No code provided")
+
+    # Check if user already used a referral code
+    existing = db.table("referral_links").select("id").eq("user_id", user_id).execute()
+    if existing.data:
+        return err("You have already used a referral code")
+
+    # Find the referral code
+    code_res = db.table("referral_codes").select("*").eq("code", code).execute()
+    if not code_res.data:
+        return err("Invalid referral code")
+
+    referral = code_res.data[0]
+
+    # Can't use your own code
+    if referral["owner_user_id"] == user_id:
+        return err("You can't use your own referral code")
+
+    # Link user to referral code
+    db.table("referral_links").insert({
+        "user_id": user_id,
+        "referral_code_id": referral["id"]
+    }).execute()
+
+    # Give user 15 free credits
+    user = get_user(user_id)
+    db.table("users").update({"credits": user["credits"] + 15}).eq("id", user_id).execute()
+
+    print(f"✅ Referral: user {user_id} used code {code} — +15 credits")
+    return ok({"message": "Referral code applied! 15 credits added to your account.", "credits": user["credits"] + 15})
+
+
+@app.route("/create-referral-code", methods=["POST"])
+def create_referral_code():
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+
+    body = request.json or {}
+    code = (body.get("code") or "").strip().upper()
+
+    if not code or len(code) < 3 or len(code) > 20:
+        return err("Code must be 3-20 characters")
+
+    # Check if code already exists
+    existing = db.table("referral_codes").select("id").eq("code", code).execute()
+    if existing.data:
+        return err("That code is already taken")
+
+    user = get_user(user_id)
+    db.table("referral_codes").insert({
+        "code": code,
+        "owner_email": user["email"],
+        "owner_user_id": user_id
+    }).execute()
+
+    return ok({"message": f"Referral code {code} created!", "code": code})
+
+
+@app.route("/my-referral-stats", methods=["GET"])
+def my_referral_stats():
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+
+    # Get their referral code
+    code_res = db.table("referral_codes").select("*").eq("owner_user_id", user_id).execute()
+    if not code_res.data:
+        return ok({"code": None, "total_referred": 0, "total_earned": 0, "earnings": []})
+
+    referral = code_res.data[0]
+
+    # Get earnings
+    earnings = db.table("affiliate_earnings").select("*").eq("affiliate_user_id", user_id).order("created_at", desc=True).execute()
+    total_earned = sum(e["amount"] for e in earnings.data)
+
+    # Count referred users
+    links = db.table("referral_links").select("*").eq("referral_code_id", referral["id"]).execute()
+
+    return ok({
+        "code": referral["code"],
+        "total_referred": len(links.data),
+        "total_earned": round(total_earned, 2),
+        "earnings": earnings.data[:20]
+    })
+
+
+def pay_affiliate(user_id, purchase_id, amount_paid):
+    """Called after every purchase to pay affiliate their 10% cut."""
+    try:
+        # Check if this user was referred
+        link = db.table("referral_links").select("*").eq("user_id", user_id).execute()
+        if not link.data:
+            return
+
+        referral_code_id = link.data[0]["referral_code_id"]
+
+        # Get the affiliate
+        code = db.table("referral_codes").select("*").eq("id", referral_code_id).execute()
+        if not code.data:
+            return
+
+        affiliate_user_id = code.data[0]["owner_user_id"]
+        if affiliate_user_id == user_id:
+            return  # shouldn't happen but just in case
+
+        affiliate_cut = round(amount_paid * 0.10, 2)
+
+        db.table("affiliate_earnings").insert({
+            "affiliate_user_id": affiliate_user_id,
+            "referred_user_id":  user_id,
+            "purchase_id":       purchase_id,
+            "amount":            affiliate_cut
+        }).execute()
+
+        print(f"💸 Affiliate cut: {affiliate_cut} to {affiliate_user_id} for purchase {purchase_id}")
+    except Exception as e:
+        print(f"⚠️ Affiliate payment error: {e}")
+
+
 # ── NOWPayments crypto ─────────────────────────────────────────────────────────
 
 @app.route("/create-crypto-payment-guest", methods=["POST"])
@@ -222,7 +354,7 @@ def create_crypto_payment_guest():
     payload = {
         "price_amount":     p["price"],
         "price_currency":   "usd",
-        "pay_currency":     "usdttrc20",
+        "pay_currency":     "usdterc20",  # USDT on Ethereum — no minimum issues
         "order_id":         f"{user_id}:{pack}",
         "order_description": f"SnapTutor {p['label']}",
         "ipn_callback_url": YOUR_DOMAIN + "/nowpayments-webhook",
@@ -314,12 +446,16 @@ def nowpayments_webhook():
 
         new_credits = user["credits"] + credits
         db.table("users").update({"credits": new_credits}).eq("id", user_id).execute()
-        db.table("purchases").insert({
+        purchase = db.table("purchases").insert({
             "user_id":       user_id,
             "credits_added": credits,
             "amount_paid":   amount,
             "stripe_session_id": data.get("payment_id", "crypto")
         }).execute()
+
+        # Pay affiliate if applicable
+        if purchase.data:
+            pay_affiliate(user_id, purchase.data[0]["id"], amount)
 
         print(f"💰 Crypto payment: user {user_id} +{credits} credits ({pack})")
 
@@ -406,6 +542,34 @@ ADMIN_HTML = """
   {% endif %}
 </div>
 
+<!-- Affiliate codes -->
+<div class="card">
+  <h2>🔗 Referral Codes</h2>
+  <form method="POST" action="/admin/create-referral-code">
+    <div class="row">
+      <input name="email" placeholder="Affiliate email" required />
+      <input name="code" placeholder="Code (e.g. JOHN10)" required style="max-width:180px; text-transform:uppercase;" />
+    </div>
+    <button type="submit">➕ Create Code</button>
+  </form>
+</div>
+
+<!-- Affiliate earnings -->
+<div class="card">
+  <h2>💸 Affiliate Earnings</h2>
+  <table>
+    <tr><th>Affiliate</th><th>Referred User</th><th>Amount</th><th>Date</th></tr>
+    {% for e in affiliate_earnings %}
+    <tr>
+      <td>{{ e.affiliate_user_id[:8] }}...</td>
+      <td>{{ e.referred_user_id[:8] }}...</td>
+      <td>${{ e.amount }}</td>
+      <td>{{ e.created_at[:10] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
 <!-- Recent purchases -->
 <div class="card">
   <h2>💰 Recent Purchases</h2>
@@ -441,10 +605,43 @@ def admin():
         users = res.data
 
     purchases = db.table("purchases").select("*").order("created_at", desc=True).limit(20).execute().data
+    affiliate_earnings = db.table("affiliate_earnings").select("*").order("created_at", desc=True).limit(20).execute().data
 
     return render_template_string(ADMIN_HTML,
         users=users, search=search, purchases=purchases,
+        affiliate_earnings=affiliate_earnings,
         msg=msg, msg_type=msg_type, venmo=VENMO_HANDLE)
+
+
+@app.route("/admin/create-referral-code", methods=["POST"])
+def admin_create_referral_code():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+
+    email = (request.form.get("email") or "").strip().lower()
+    code  = (request.form.get("code") or "").strip().upper()
+
+    if not email or not code:
+        return redirect("/admin?msg=Email+and+code+required&type=err")
+
+    res = db.table("users").select("*").eq("email", email).execute()
+    if not res.data:
+        return redirect("/admin?msg=User+not+found&type=err")
+
+    user = res.data[0]
+
+    existing = db.table("referral_codes").select("id").eq("code", code).execute()
+    if existing.data:
+        return redirect("/admin?msg=Code+already+exists&type=err")
+
+    db.table("referral_codes").insert({
+        "code": code,
+        "owner_email": email,
+        "owner_user_id": user["id"]
+    }).execute()
+
+    print(f"✅ Admin created referral code {code} for {email}")
+    return redirect(f"/admin?msg=Created+code+{code}+for+{email}&type=ok")
 
 
 @app.route("/admin/add-credits", methods=["POST"])
@@ -462,12 +659,16 @@ def admin_add_credits():
     user        = res.data[0]
     new_credits = user["credits"] + credits
     db.table("users").update({"credits": new_credits}).eq("id", user["id"]).execute()
-    db.table("purchases").insert({
+    purchase = db.table("purchases").insert({
         "user_id":       user["id"],
         "credits_added": credits,
         "amount_paid":   0,
         "stripe_session_id": "manual-venmo"
     }).execute()
+
+    # Pay affiliate if applicable
+    if purchase.data:
+        pay_affiliate(user["id"], purchase.data[0]["id"], 0)
 
     print(f"✅ Admin added {credits} credits to {email}")
     return redirect(f"/admin?msg=Added+{credits}+credits+to+{email}&type=ok&search={email}")
