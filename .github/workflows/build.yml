@@ -1,0 +1,60 @@
+name: Build SnapTutor
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pillow keyboard requests pystray
+
+      - name: Build Windows exe
+        run: |
+          pyinstaller --onefile --windowed --name "SnapTutor" snapsolve.py
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SnapTutor-Windows
+          path: dist/SnapTutor.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pillow keyboard requests pystray
+
+      - name: Build Mac app
+        run: |
+          pyinstaller --onefile --windowed --name "SnapTutor" snapsolve.py
+
+      - name: Zip Mac app
+        run: |
+          cd dist
+          zip -r SnapTutor-Mac.zip SnapTutor
+
+      - name: Upload Mac build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SnapTutor-Mac
+          path: dist/SnapTutor-Mac.zip
