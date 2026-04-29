@@ -657,17 +657,6 @@ ADMIN_HTML = """
 </body>
 </html>
 """
-      <td>+{{ p.credits_added }}</td>
-      <td>${{ p.amount_paid }}</td>
-      <td>{{ p.created_at[:10] }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-</div>
-
-</body>
-</html>
-"""
 
 @app.route("/admin", methods=["GET"])
 def admin():
