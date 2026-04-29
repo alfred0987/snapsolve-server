@@ -468,7 +468,7 @@ ADMIN_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>SnapSolve Admin</title>
+<title>SnapTutor Admin</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 32px; }
@@ -479,41 +479,53 @@ ADMIN_HTML = """
   input, select { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; color: #e2e8f0; font-size: 14px; width: 100%; margin-bottom: 10px; }
   button { background: #e8ff47; color: #000; border: none; border-radius: 8px; padding: 10px 20px; font-weight: 700; cursor: pointer; font-size: 14px; }
   button:hover { background: #d4eb33; }
+  .btn-red { background: #dc2626; color: #fff; }
+  .btn-red:hover { background: #b91c1c; }
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
   .msg { padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
   .msg.ok  { background: #14532d; color: #86efac; }
   .msg.err { background: #7f1d1d; color: #fca5a5; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; color: #64748b; padding: 8px 12px; border-bottom: 1px solid #334155; }
-  td { padding: 10px 12px; border-bottom: 1px solid #1e293b; }
-  tr:hover td { background: #1e293b; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1a2535; vertical-align: middle; }
+  tr:hover td { background: #162030; }
   .badge { background: #2563eb; color: #fff; border-radius: 4px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
+  .badge-green { background: #16a34a; }
+  .badge-yellow { background: #d97706; }
   .row { display: flex; gap: 12px; }
   .row input { flex: 1; }
   .venmo { background: #1e3a5f; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
   .venmo strong { color: #60a5fa; }
+  .bank-card { background: #0f1a2a; border: 1px solid #1e2a3a; border-radius: 8px; padding: 16px 20px; margin-bottom: 12px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .bank-email { font-weight: 600; font-size: 14px; }
+  .bank-code { font-size: 12px; color: #64748b; margin-top: 2px; font-family: monospace; }
+  .bank-owed { font-size: 24px; font-weight: 700; color: #e8ff47; }
+  .bank-owed.zero { color: #334155; }
+  .bank-meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .section-sep { border-top: 1px solid #1e2a3a; margin: 8px 0 16px; }
 </style>
 </head>
 <body>
-<h1>⚡ SnapSolve Admin</h1>
-<p class="sub">Manage users, credits, and manual payments</p>
+<h1>⚡ SnapTutor Admin</h1>
+<p class="sub">Manage users, credits, affiliates, and payments</p>
 
 {% if msg %}
 <div class="msg {{ msg_type }}">{{ msg }}</div>
 {% endif %}
 
-<!-- Venmo reminder -->
+<!-- Manual Payments -->
 <div class="card">
-  <h2>📱 Venmo Manual Payments</h2>
+  <h2>📱 Add Credits (Venmo Payment)</h2>
   <div class="venmo">
     Your Venmo: <strong>{{ venmo }}</strong><br><br>
-    When someone pays manually, search their email below and add their credits.
+    When someone pays, enter their email, how many credits to add, and the amount they paid.
   </div>
   <form method="POST" action="/admin/add-credits">
     <div class="row">
       <input name="email" placeholder="Customer email" required />
-      <input name="credits" type="number" placeholder="Credits to add" required style="max-width:160px" />
+      <input name="credits" type="number" placeholder="Credits" required style="max-width:120px" />
+      <input name="amount_paid" type="number" step="0.01" placeholder="$ Paid" required style="max-width:120px" />
     </div>
-    <input name="note" placeholder="Note (e.g. Venmo payment $5 — 100 credits)" />
     <button type="submit">➕ Add Credits</button>
   </form>
 </div>
@@ -527,7 +539,6 @@ ADMIN_HTML = """
       <button type="submit">Search</button>
     </div>
   </form>
-
   {% if users %}
   <table>
     <tr><th>Email</th><th>Credits</th><th>Joined</th></tr>
@@ -542,9 +553,41 @@ ADMIN_HTML = """
   {% endif %}
 </div>
 
+<!-- Affiliate bank accounts -->
+<div class="card">
+  <h2>🏦 Affiliate Bank Accounts</h2>
+  <p style="color:#64748b; font-size:13px; margin-bottom:16px;">Total owed to each affiliate. Mark as paid once you've sent them their money.</p>
+  {% if affiliate_balances %}
+    {% for a in affiliate_balances %}
+    <div class="bank-card">
+      <div>
+        <div class="bank-email">{{ a.email }}</div>
+        <div class="bank-code">Code: {{ a.code }}</div>
+        <div class="bank-meta">{{ a.total_referrals }} referrals · {{ a.total_sales }} sales</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="bank-owed {% if a.owed == 0 %}zero{% endif %}">${{ "%.2f"|format(a.owed) }}</div>
+        <div class="bank-meta">lifetime earned: ${{ "%.2f"|format(a.lifetime) }}</div>
+      </div>
+      {% if a.owed > 0 %}
+      <form method="POST" action="/admin/pay-affiliate" style="margin:0;">
+        <input type="hidden" name="affiliate_user_id" value="{{ a.user_id }}" />
+        <input type="hidden" name="amount" value="{{ a.owed }}" />
+        <button type="submit" class="btn-red btn-sm">✓ Mark Paid (${{ "%.2f"|format(a.owed) }})</button>
+      </form>
+      {% else %}
+      <span style="font-size:12px; color:#334155; font-weight:600;">ALL PAID ✓</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+  <p style="color:#334155; font-size:13px;">No affiliates yet.</p>
+  {% endif %}
+</div>
+
 <!-- Affiliate codes -->
 <div class="card">
-  <h2>🔗 Referral Codes</h2>
+  <h2>🔗 Create Referral Code</h2>
   <form method="POST" action="/admin/create-referral-code">
     <div class="row">
       <input name="email" placeholder="Affiliate email" required />
@@ -554,19 +597,44 @@ ADMIN_HTML = """
   </form>
 </div>
 
-<!-- Affiliate earnings -->
+<!-- Referral signups log -->
 <div class="card">
-  <h2>💸 Affiliate Earnings</h2>
+  <h2>📥 Referral Signups</h2>
+  <p style="color:#64748b; font-size:13px; margin-bottom:12px;">Who signed up using each affiliate code.</p>
   <table>
-    <tr><th>Affiliate</th><th>Referred User</th><th>Amount</th><th>Date</th></tr>
+    <tr><th>Affiliate Code</th><th>Affiliate Email</th><th>New User Email</th><th>Date</th></tr>
+    {% for s in referral_signups %}
+    <tr>
+      <td><span class="badge badge-yellow">{{ s.code }}</span></td>
+      <td>{{ s.affiliate_email }}</td>
+      <td>{{ s.user_email }}</td>
+      <td>{{ s.created_at[:10] }}</td>
+    </tr>
+    {% endfor %}
+    {% if not referral_signups %}
+    <tr><td colspan="4" style="color:#334155;">No signups yet.</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+<!-- Affiliate earnings log -->
+<div class="card">
+  <h2>💸 Affiliate Earnings Log</h2>
+  <p style="color:#64748b; font-size:13px; margin-bottom:12px;">Every purchase made by a referred user and what the affiliate earned.</p>
+  <table>
+    <tr><th>Affiliate Email</th><th>Customer Email</th><th>Sale Amount</th><th>Affiliate Cut</th><th>Date</th></tr>
     {% for e in affiliate_earnings %}
     <tr>
-      <td>{{ e.affiliate_user_id[:8] }}...</td>
-      <td>{{ e.referred_user_id[:8] }}...</td>
-      <td>${{ e.amount }}</td>
+      <td>{{ e.affiliate_email }}</td>
+      <td>{{ e.referred_email }}</td>
+      <td>${{ "%.2f"|format(e.sale_amount) }}</td>
+      <td style="color:#e8ff47; font-weight:700;">${{ "%.2f"|format(e.amount) }}</td>
       <td>{{ e.created_at[:10] }}</td>
     </tr>
     {% endfor %}
+    {% if not affiliate_earnings %}
+    <tr><td colspan="5" style="color:#334155;">No earnings yet.</td></tr>
+    {% endif %}
   </table>
 </div>
 
@@ -574,10 +642,21 @@ ADMIN_HTML = """
 <div class="card">
   <h2>💰 Recent Purchases</h2>
   <table>
-    <tr><th>User</th><th>Credits</th><th>Amount</th><th>Date</th></tr>
+    <tr><th>Email</th><th>Credits</th><th>Amount Paid</th><th>Date</th></tr>
     {% for p in purchases %}
     <tr>
-      <td>{{ p.user_id[:8] }}...</td>
+      <td>{{ p.email }}</td>
+      <td>+{{ p.credits_added }}</td>
+      <td>${{ "%.2f"|format(p.amount_paid) }}</td>
+      <td>{{ p.created_at[:10] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+</body>
+</html>
+"""
       <td>+{{ p.credits_added }}</td>
       <td>${{ p.amount_paid }}</td>
       <td>{{ p.created_at[:10] }}</td>
@@ -595,21 +674,95 @@ def admin():
     if not session.get("admin"):
         return redirect("/admin/login")
 
-    search    = request.args.get("search", "")
-    msg       = request.args.get("msg", "")
-    msg_type  = request.args.get("type", "ok")
+    search   = request.args.get("search", "")
+    msg      = request.args.get("msg", "")
+    msg_type = request.args.get("type", "ok")
 
     users = []
     if search:
         res   = db.table("users").select("*").ilike("email", f"%{search}%").execute()
         users = res.data
 
-    purchases = db.table("purchases").select("*").order("created_at", desc=True).limit(20).execute().data
-    affiliate_earnings = db.table("affiliate_earnings").select("*").order("created_at", desc=True).limit(20).execute().data
+    # Recent purchases with emails
+    purchases_raw = db.table("purchases").select("*").order("created_at", desc=True).limit(20).execute().data
+    purchases = []
+    for p in purchases_raw:
+        try:
+            u = db.table("users").select("email").eq("id", p["user_id"]).single().execute()
+            p["email"] = u.data["email"] if u.data else p["user_id"][:8]
+        except:
+            p["email"] = p["user_id"][:8]
+        purchases.append(p)
+
+    # Affiliate earnings with emails
+    earnings_raw = db.table("affiliate_earnings").select("*").order("created_at", desc=True).limit(50).execute().data
+    affiliate_earnings = []
+    for e in earnings_raw:
+        try:
+            aff = db.table("users").select("email").eq("id", e["affiliate_user_id"]).single().execute()
+            ref = db.table("users").select("email").eq("id", e["referred_user_id"]).single().execute()
+            pur = db.table("purchases").select("amount_paid").eq("id", e["purchase_id"]).single().execute()
+            e["affiliate_email"] = aff.data["email"] if aff.data else "unknown"
+            e["referred_email"]  = ref.data["email"] if ref.data else "unknown"
+            e["sale_amount"]     = pur.data["amount_paid"] if pur.data else 0
+        except:
+            e["affiliate_email"] = "unknown"
+            e["referred_email"]  = "unknown"
+            e["sale_amount"]     = 0
+        affiliate_earnings.append(e)
+
+    # Referral signups log
+    links_raw = db.table("referral_links").select("*").order("created_at", desc=True).limit(50).execute().data
+    referral_signups = []
+    for l in links_raw:
+        try:
+            user  = db.table("users").select("email").eq("id", l["user_id"]).single().execute()
+            code  = db.table("referral_codes").select("code, owner_email").eq("id", l["referral_code_id"]).single().execute()
+            referral_signups.append({
+                "user_email":      user.data["email"] if user.data else "unknown",
+                "affiliate_email": code.data["owner_email"] if code.data else "unknown",
+                "code":            code.data["code"] if code.data else "unknown",
+                "created_at":      l["created_at"]
+            })
+        except:
+            pass
+
+    # Affiliate bank accounts
+    codes_raw = db.table("referral_codes").select("*").execute().data
+    affiliate_balances = []
+    for c in codes_raw:
+        try:
+            # Total earned
+            earned = db.table("affiliate_earnings").select("amount").eq("affiliate_user_id", c["owner_user_id"]).execute()
+            lifetime = sum(e["amount"] for e in earned.data)
+
+            # Already paid
+            paid_res = db.table("affiliate_payouts").select("amount").eq("affiliate_user_id", c["owner_user_id"]).execute()
+            paid = sum(p["amount"] for p in paid_res.data) if paid_res.data else 0
+
+            owed = round(lifetime - paid, 2)
+
+            # Count referrals and sales
+            links = db.table("referral_links").select("id").eq("referral_code_id", c["id"]).execute()
+            sales = len([e for e in earned.data])
+
+            affiliate_balances.append({
+                "user_id":        c["owner_user_id"],
+                "email":          c["owner_email"],
+                "code":           c["code"],
+                "lifetime":       lifetime,
+                "owed":           max(owed, 0),
+                "total_referrals": len(links.data),
+                "total_sales":    sales
+            })
+        except:
+            pass
 
     return render_template_string(ADMIN_HTML,
         users=users, search=search, purchases=purchases,
         affiliate_earnings=affiliate_earnings,
+        referral_signups=referral_signups,
+        affiliate_balances=affiliate_balances,
         msg=msg, msg_type=msg_type, venmo=VENMO_HANDLE)
 
 
@@ -649,8 +802,9 @@ def admin_add_credits():
     if not session.get("admin"):
         return redirect("/admin/login")
 
-    email   = (request.form.get("email") or "").strip().lower()
-    credits = int(request.form.get("credits") or 0)
+    email       = (request.form.get("email") or "").strip().lower()
+    credits     = int(request.form.get("credits") or 0)
+    amount_paid = float(request.form.get("amount_paid") or 0)
 
     res = db.table("users").select("*").eq("email", email).execute()
     if not res.data:
@@ -662,16 +816,32 @@ def admin_add_credits():
     purchase = db.table("purchases").insert({
         "user_id":       user["id"],
         "credits_added": credits,
-        "amount_paid":   0,
+        "amount_paid":   amount_paid,
         "stripe_session_id": "manual-venmo"
     }).execute()
 
-    # Pay affiliate if applicable
     if purchase.data:
-        pay_affiliate(user["id"], purchase.data[0]["id"], 0)
+        pay_affiliate(user["id"], purchase.data[0]["id"], amount_paid)
 
-    print(f"✅ Admin added {credits} credits to {email}")
+    print(f"✅ Admin added {credits} credits to {email} (${amount_paid})")
     return redirect(f"/admin?msg=Added+{credits}+credits+to+{email}&type=ok&search={email}")
+
+
+@app.route("/admin/pay-affiliate", methods=["POST"])
+def admin_pay_affiliate():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+
+    affiliate_user_id = request.form.get("affiliate_user_id")
+    amount            = float(request.form.get("amount") or 0)
+
+    db.table("affiliate_payouts").insert({
+        "affiliate_user_id": affiliate_user_id,
+        "amount":            amount
+    }).execute()
+
+    print(f"✅ Paid affiliate {affiliate_user_id} ${amount}")
+    return redirect("/admin?msg=Affiliate+marked+as+paid&type=ok")
 
 
 ADMIN_LOGIN_HTML = """
