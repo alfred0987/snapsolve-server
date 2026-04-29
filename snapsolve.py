@@ -26,11 +26,10 @@ try:
     import keyboard
     import requests
     from PIL import ImageGrab, Image, ImageDraw
-    import pystray
 except ImportError as e:
     print(f"\n❌ Missing package: {e}")
     print("\nRun this to install everything:\n")
-    print("    pip install pillow keyboard requests pystray\n")
+    print("    pip install pillow keyboard requests\n")
     sys.exit(1)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -511,6 +510,268 @@ class AnswerOverlay:
         self.win.geometry(f"+{x}+{y}")
 
 
+# ── Settings file ──────────────────────────────────────────────────────────────
+SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".snapsolve_settings")
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {"hotkey": "f2", "gear_x": None, "gear_y": None}
+
+def save_settings(settings):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f)
+
+
+# ── Floating gear panel ────────────────────────────────────────────────────────
+
+class GearPanel:
+    """Always-on-top floating gear icon that expands into a settings panel."""
+
+    GEAR_PATH = "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"
+
+    def __init__(self, root, email, get_credits, on_quit, on_switch, on_hotkey_change):
+        self.root             = root
+        self.email            = email
+        self.get_credits      = get_credits
+        self.on_quit          = on_quit
+        self.on_switch        = on_switch
+        self.on_hotkey_change = on_hotkey_change
+        self.expanded         = False
+        self.settings         = load_settings()
+        self._drag_x          = 0
+        self._drag_y          = 0
+        self._rebinding       = False
+
+        self._build()
+
+    def _build(self):
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+
+        # Default position top-right
+        gx = self.settings.get("gear_x") or sw - 70
+        gy = self.settings.get("gear_y") or 30
+
+        self.win = tk.Toplevel(self.root)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-alpha", 0.95)
+        self.win.configure(bg="#0f172a")
+        self.win.geometry(f"+{gx}+{gy}")
+
+        self._build_icon()
+
+    def _build_icon(self):
+        """The small gear button."""
+        for w in self.win.winfo_children():
+            w.destroy()
+        self.expanded = False
+        self.win.geometry("44x44")
+
+        canvas = tk.Canvas(self.win, width=44, height=44, bg="#0f172a",
+                           highlightthickness=0, cursor="hand2")
+        canvas.pack()
+
+        import math
+        cx, cy = 22, 22
+        r_out, r_in, teeth = 13, 9, 8
+        points = []
+        for i in range(teeth * 2):
+            angle = math.pi * i / teeth - math.pi / 2
+            a1 = angle - math.pi / (teeth * 2.5)
+            a2 = angle + math.pi / (teeth * 2.5)
+            r  = r_out if i % 2 == 0 else r_in
+            if i % 2 == 0:
+                points.extend([cx + r_out * math.cos(a1), cy + r_out * math.sin(a1)])
+                points.extend([cx + r_out * math.cos(a2), cy + r_out * math.sin(a2)])
+            else:
+                points.extend([cx + r_in * math.cos(a1), cy + r_in * math.sin(a1)])
+                points.extend([cx + r_in * math.cos(a2), cy + r_in * math.sin(a2)])
+
+        canvas.create_oval(2, 2, 42, 42, fill="#1e293b", outline="#e8ff47", width=2)
+        canvas.create_polygon(points, fill="#e8ff47", outline="#e8ff47")
+        canvas.create_oval(cx-5, cy-5, cx+5, cy+5, fill="#1e293b", outline="#1e293b")
+
+        canvas.bind("<ButtonPress-1>",   self._drag_start)
+        canvas.bind("<B1-Motion>",       self._drag_move)
+        canvas.bind("<ButtonRelease-1>", self._drag_end)
+        self._drag_moved = False
+
+    def _build_panel(self):
+        """The expanded settings panel."""
+        for w in self.win.winfo_children():
+            w.destroy()
+        self.expanded = True
+        self.win.geometry("248x380")
+
+        # Header / drag handle
+        header = tk.Frame(self.win, bg="#0a1220", padx=14, pady=10)
+        header.pack(fill=tk.X)
+        header.bind("<ButtonPress-1>",   self._drag_start)
+        header.bind("<B1-Motion>",       self._drag_move)
+        header.bind("<ButtonRelease-1>", self._drag_end)
+
+        # Drag dots
+        dots = tk.Label(header, text="⠿",
+            font=tkfont.Font(family="Segoe UI", size=14),
+            bg="#0a1220", fg="#334155", cursor="fleur")
+        dots.pack(side=tk.LEFT, padx=(0, 6))
+        dots.bind("<ButtonPress-1>",   self._drag_start)
+        dots.bind("<B1-Motion>",       self._drag_move)
+        dots.bind("<ButtonRelease-1>", self._drag_end)
+
+        tk.Label(header, text="SNAP TUTOR",
+            font=tkfont.Font(family="Segoe UI", size=10, weight="bold"),
+            bg="#0a1220", fg="#e8ff47").pack(side=tk.LEFT)
+
+        close_btn = tk.Label(header, text="×", font=tkfont.Font(family="Segoe UI", size=16),
+            bg="#0a1220", fg="#5a6a80", cursor="hand2")
+        close_btn.pack(side=tk.RIGHT)
+        close_btn.bind("<Button-1>", lambda e: self._build_icon())
+
+        body = tk.Frame(self.win, bg="#0d1826", padx=14, pady=12)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        # Account
+        self._section(body, "LOGGED IN AS")
+        tk.Label(body, text=self.email,
+            font=tkfont.Font(family="Segoe UI", size=12, weight="bold"),
+            bg="#0a1220", fg="#e8edf5", anchor="w",
+            wraplength=210).pack(fill=tk.X, pady=(0, 10))
+
+        # Credits
+        self._section(body, "CREDITS")
+        cred_row = tk.Frame(body, bg="#0a1220")
+        cred_row.pack(fill=tk.X, pady=(0, 10))
+
+        self.credits_lbl = tk.Label(cred_row,
+            text=str(self.get_credits()),
+            font=tkfont.Font(family="Segoe UI", size=22, weight="bold"),
+            bg="#0a1220", fg="#e8ff47")
+        self.credits_lbl.pack(side=tk.LEFT)
+
+        buy_lbl = tk.Label(cred_row, text="Buy more →",
+            font=tkfont.Font(family="Segoe UI", size=10),
+            bg="#0a1220", fg="#3b82f6", cursor="hand2")
+        buy_lbl.pack(side=tk.RIGHT, padx=4)
+        buy_lbl.bind("<Button-1>", lambda e: self._open_buy())
+
+        # Hotkey
+        self._section(body, "HOTKEY")
+        hk_row = tk.Frame(body, bg="#0a1220")
+        hk_row.pack(fill=tk.X, pady=(0, 10))
+
+        self.hk_lbl = tk.Label(hk_row,
+            text=self.settings.get("hotkey", "f2").upper(),
+            font=tkfont.Font(family="Courier New", size=13, weight="bold"),
+            bg="#1e2a3a", fg="#e8edf5", width=6, relief="flat")
+        self.hk_lbl.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.hk_btn = tk.Button(hk_row, text="Change",
+            font=tkfont.Font(family="Segoe UI", size=10),
+            bg="#0a1220", fg="#94a3b8",
+            relief="flat", bd=1, cursor="hand2",
+            command=self._start_rebind)
+        self.hk_btn.pack(side=tk.LEFT)
+
+        self.hk_hint = tk.Label(body, text="Press any key...",
+            font=tkfont.Font(family="Segoe UI", size=10),
+            bg="#0d1826", fg="#e8ff47")
+
+        # Divider
+        tk.Frame(body, bg="#1e2a3a", height=1).pack(fill=tk.X, pady=8)
+
+        # Switch account
+        sw_btn = tk.Button(body, text="Switch account",
+            font=tkfont.Font(family="Segoe UI", size=12),
+            bg="#0d1826", fg="#94a3b8",
+            relief="flat", anchor="w", cursor="hand2",
+            command=self._switch_account)
+        sw_btn.pack(fill=tk.X, pady=(0, 6))
+
+        # Quit
+        quit_btn = tk.Button(body, text="Quit Snap Tutor",
+            font=tkfont.Font(family="Segoe UI", size=12),
+            bg="#0d1826", fg="#f87171",
+            relief="flat", anchor="w", cursor="hand2",
+            command=self._quit)
+        quit_btn.pack(fill=tk.X)
+
+    def _section(self, parent, label):
+        tk.Label(parent, text=label,
+            font=tkfont.Font(family="Segoe UI", size=9, weight="bold"),
+            bg="#0a1220" if label != "HOTKEY" else "#0d1826",
+            fg="#5a6a80").pack(anchor="w", pady=(0, 4))
+
+    def _open_buy(self):
+        import webbrowser
+        webbrowser.open("https://thesnaptutor.netlify.app/#pricing")
+
+    def _start_rebind(self):
+        self._rebinding = True
+        self.hk_btn.config(text="Cancel", command=self._cancel_rebind)
+        self.hk_hint.pack(anchor="w")
+        self.win.bind("<Key>", self._on_key)
+        self.win.focus_force()
+
+    def _cancel_rebind(self):
+        self._rebinding = False
+        self.hk_hint.pack_forget()
+        self.hk_btn.config(text="Change", command=self._start_rebind)
+        self.win.unbind("<Key>")
+
+    def _on_key(self, e):
+        if not self._rebinding:
+            return
+        new_key = e.keysym.lower()
+        if new_key in ("escape", "return"):
+            self._cancel_rebind()
+            return
+        # Update hotkey
+        self.on_hotkey_change(new_key)
+        self.settings["hotkey"] = new_key
+        save_settings(self.settings)
+        self.hk_lbl.config(text=new_key.upper())
+        self._cancel_rebind()
+
+    def _switch_account(self):
+        clear_session()
+        self.on_switch()
+
+    def _quit(self):
+        self.on_quit()
+
+    def update_credits(self, credits):
+        if self.expanded and hasattr(self, "credits_lbl"):
+            self.credits_lbl.config(text=str(credits))
+
+    def _drag_start(self, e):
+        self._drag_x     = e.x_root - self.win.winfo_x()
+        self._drag_y     = e.y_root - self.win.winfo_y()
+        self._drag_moved = False
+
+    def _drag_move(self, e):
+        x = e.x_root - self._drag_x
+        y = e.y_root - self._drag_y
+        self.win.geometry(f"+{x}+{y}")
+        self._drag_moved = True
+
+    def _drag_end(self, e):
+        # Save position
+        self.settings["gear_x"] = self.win.winfo_x()
+        self.settings["gear_y"] = self.win.winfo_y()
+        save_settings(self.settings)
+        # If barely moved, treat as click
+        if not self._drag_moved:
+            if self.expanded:
+                self._build_icon()
+            else:
+                self._build_panel()
+
+
 # ── Main app ───────────────────────────────────────────────────────────────────
 
 class SnapSolve:
@@ -525,43 +786,28 @@ class SnapSolve:
         self.root.withdraw()
         self.overlay = AnswerOverlay(self.root, lambda: self.credits)
 
+        # Load saved settings
+        self.settings = load_settings()
+        global HOTKEY
+        HOTKEY = self.settings.get("hotkey", "f2")
+
+        # Register hotkeys
         keyboard.add_hotkey(HOTKEY, self.on_hotkey, suppress=True)
         keyboard.add_hotkey("escape", self.on_escape)
-        keyboard.add_hotkey("f3", self.quit_app)
 
-        # System tray
-        self._start_tray(email, credits)
-
-        print(f"✅ Logged in as {email} — {credits} credits")
-        print(f"   Press {HOTKEY.upper()} then drag over any question")
-        print(f"   Escape dismisses overlay  •  F3 quits\n")
-
-        self.root.mainloop()
-
-    def _make_tray_icon(self):
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        d   = ImageDraw.Draw(img)
-        d.ellipse([4, 4, 60, 60], fill="#e8ff47")
-        d.text((18, 14), "ST", fill="#000000")
-        return img
-
-    def _start_tray(self, email, credits):
-        def on_quit(icon, item):
-            icon.stop()
-            self.root.after(0, self.root.quit)
-
-        def on_status(icon, item):
-            pass  # just shows the label
-
-        menu = pystray.Menu(
-            pystray.MenuItem(f"Logged in: {email}", on_status, enabled=False),
-            pystray.MenuItem(f"Credits: {self.credits}", on_status, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit Snap Tutor", on_quit),
+        # Floating gear panel
+        self.gear = GearPanel(
+            self.root, email,
+            get_credits      = lambda: self.credits,
+            on_quit          = self.quit_app,
+            on_switch        = self.switch_account,
+            on_hotkey_change = self.change_hotkey
         )
 
-        self.tray = pystray.Icon("SnapTutor", self._make_tray_icon(), "Snap Tutor — Running", menu)
-        threading.Thread(target=self.tray.run, daemon=True).start()
+        print(f"✅ Logged in as {email} — {credits} credits")
+        print(f"   Press {HOTKEY.upper()} to capture a question\n")
+
+        self.root.mainloop()
 
     def on_hotkey(self):
         if self.overlay.visible:
@@ -575,7 +821,28 @@ class SnapSolve:
         self.root.after(0, self.overlay.hide)
 
     def quit_app(self):
-        self.root.after(0, self.root.quit)
+        import os as _os
+        _os.kill(_os.getpid(), 9)
+
+    def switch_account(self):
+        clear_session()
+        self.root.after(0, self._relaunch_login)
+
+    def _relaunch_login(self):
+        self.root.destroy()
+        def on_login(token, email, credits):
+            SnapSolve(token, email, credits)
+        LoginWindow(on_login)
+
+    def change_hotkey(self, new_key):
+        global HOTKEY
+        try:
+            keyboard.remove_hotkey(HOTKEY)
+        except:
+            pass
+        HOTKEY = new_key
+        keyboard.add_hotkey(HOTKEY, self.on_hotkey, suppress=True)
+        print(f"✅ Hotkey changed to {HOTKEY.upper()}")
 
     def _start_capture(self):
         selector = RegionSelector(self._on_region)
@@ -588,13 +855,11 @@ class SnapSolve:
 
     def _solve(self, x1, y1, x2, y2):
         try:
-            # Screenshot and encode
             screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
             buf = io.BytesIO()
             screenshot.save(buf, format="PNG")
             img_b64 = base64.b64encode(buf.getvalue()).decode()
 
-            # Send to server
             res = requests.post(
                 f"{SERVER_URL}/solve",
                 json={"image": img_b64},
@@ -613,8 +878,9 @@ class SnapSolve:
                 self.root.after(0, lambda: self.overlay.show_error(msg))
                 return
 
-            raw              = data["raw"]
-            self.credits     = data["credits_remaining"]
+            raw          = data["raw"]
+            self.credits = data["credits_remaining"]
+            self.root.after(0, lambda: self.gear.update_credits(self.credits))
             q_type, letter, explanation, confidence = self._parse(raw)
 
             print(f"\n--- Response ---\n{raw}\n----------------\n")
