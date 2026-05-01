@@ -653,7 +653,7 @@ ADMIN_HTML = """
 </head>
 <body>
 <h1>⚡ SnapTutor Admin</h1>
-<p class="sub">Manage users, credits, affiliates, and payments</p>
+<p class="sub">Manage users, credits, affiliates, and payments &nbsp;·&nbsp; <a href="/admin/analytics" style="color:#e8ff47; text-decoration:none;">📊 Analytics →</a></p>
 
 {% if msg %}
 <div class="msg {{ msg_type }}">{{ msg }}</div>
@@ -1084,7 +1084,219 @@ def admin_pay_affiliate():
     return redirect("/admin?msg=Affiliate+marked+as+paid&type=ok")
 
 
-ADMIN_LOGIN_HTML = """
+ANALYTICS_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>SnapTutor Analytics</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Segoe UI',sans-serif; background:#0f172a; color:#e2e8f0; min-height:100vh; padding:32px; }
+  h1 { color:#e8ff47; font-size:28px; margin-bottom:4px; }
+  .sub { color:#64748b; font-size:14px; margin-bottom:32px; }
+  .nav { display:flex; gap:16px; margin-bottom:32px; }
+  .nav a { color:#64748b; text-decoration:none; font-size:14px; padding:8px 16px; border:1px solid #1e2a3a; border-radius:8px; }
+  .nav a:hover { color:#e8ff47; border-color:#e8ff47; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:32px; }
+  .stat { background:#1e293b; border-radius:12px; padding:24px; }
+  .stat-num { font-size:42px; font-weight:800; color:#e8ff47; line-height:1; margin-bottom:4px; font-family:'Segoe UI',sans-serif; }
+  .stat-label { font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; }
+  .stat-sub { font-size:12px; color:#334155; margin-top:4px; }
+  .card { background:#1e293b; border-radius:12px; padding:24px; margin-bottom:16px; }
+  .card h2 { font-size:14px; color:#94a3b8; margin-bottom:16px; text-transform:uppercase; letter-spacing:0.1em; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:#64748b; padding:8px 12px; border-bottom:1px solid #334155; }
+  td { padding:10px 12px; border-bottom:1px solid #1a2535; }
+  .bar-wrap { background:#0f172a; border-radius:4px; height:8px; flex:1; overflow:hidden; }
+  .bar { height:100%; background:#e8ff47; border-radius:4px; transition:width 0.5s; }
+  .row-bar { display:flex; align-items:center; gap:12px; }
+  .green { color:#4ade80; }
+  .yellow { color:#e8ff47; }
+</style>
+</head>
+<body>
+<h1>⚡ Analytics</h1>
+<p class="sub">SnapTutor business overview</p>
+
+<div class="nav">
+  <a href="/admin">← Admin Panel</a>
+  <a href="/admin/analytics">↻ Refresh</a>
+</div>
+
+<!-- Top stats -->
+<div class="grid">
+  <div class="stat">
+    <div class="stat-num">{{ total_users }}</div>
+    <div class="stat-label">Total Users</div>
+    <div class="stat-sub">+{{ new_users_today }} today · +{{ new_users_week }} this week</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">${{ "%.2f"|format(total_revenue) }}</div>
+    <div class="stat-label">Total Revenue</div>
+    <div class="stat-sub">${{ "%.2f"|format(revenue_today) }} today · ${{ "%.2f"|format(revenue_week) }} this week</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">{{ total_questions }}</div>
+    <div class="stat-label">Questions Answered</div>
+    <div class="stat-sub">{{ questions_today }} today · {{ questions_week }} this week</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">{{ total_credits_sold }}</div>
+    <div class="stat-label">Credits Sold</div>
+    <div class="stat-sub">{{ credits_today }} today</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">${{ "%.2f"|format(avg_revenue_per_user) }}</div>
+    <div class="stat-label">Avg Revenue / User</div>
+    <div class="stat-sub">{{ paying_users }} paying users</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">{{ total_affiliates }}</div>
+    <div class="stat-label">Affiliates</div>
+    <div class="stat-sub">${{ "%.2f"|format(total_affiliate_owed) }} owed</div>
+  </div>
+</div>
+
+<!-- Questions per day -->
+<div class="card">
+  <h2>📊 Questions per day (last 7 days)</h2>
+  <table>
+    <tr><th>Date</th><th>Questions</th><th></th></tr>
+    {% for d in questions_by_day %}
+    <tr>
+      <td>{{ d.date }}</td>
+      <td class="yellow">{{ d.count }}</td>
+      <td style="width:50%">
+        <div class="row-bar">
+          <div class="bar-wrap"><div class="bar" style="width:{{ [d.count * 100 // (max_day or 1), 100]|min }}%"></div></div>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<!-- Revenue per day -->
+<div class="card">
+  <h2>💰 Revenue per day (last 7 days)</h2>
+  <table>
+    <tr><th>Date</th><th>Revenue</th><th>Credits Sold</th></tr>
+    {% for d in revenue_by_day %}
+    <tr>
+      <td>{{ d.date }}</td>
+      <td class="green">${{ "%.2f"|format(d.revenue) }}</td>
+      <td>{{ d.credits }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<!-- Recent signups -->
+<div class="card">
+  <h2>👥 Recent signups</h2>
+  <table>
+    <tr><th>Email</th><th>Credits</th><th>Joined</th></tr>
+    {% for u in recent_users %}
+    <tr>
+      <td>{{ u.email }}</td>
+      <td>{{ u.credits }}</td>
+      <td>{{ u.created_at[:16].replace('T',' ') }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+</body>
+</html>
+"""
+
+@app.route("/admin/analytics", methods=["GET"])
+def admin_analytics():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+
+    from datetime import timezone
+    now     = datetime.utcnow()
+    today   = now.date().isoformat()
+    week_ago = (now - timedelta(days=7)).isoformat()
+
+    # Total users
+    all_users   = db.table("users").select("*").is_("deleted_at", "null").execute().data
+    total_users = len(all_users)
+    new_users_today = len([u for u in all_users if u["created_at"][:10] == today])
+    new_users_week  = len([u for u in all_users if u["created_at"] >= week_ago])
+
+    # Revenue
+    all_purchases     = db.table("purchases").select("*").execute().data
+    total_revenue     = sum(p["amount_paid"] for p in all_purchases)
+    revenue_today     = sum(p["amount_paid"] for p in all_purchases if p["created_at"][:10] == today)
+    revenue_week      = sum(p["amount_paid"] for p in all_purchases if p["created_at"] >= week_ago)
+    total_credits_sold = sum(p["credits_added"] for p in all_purchases)
+    credits_today     = sum(p["credits_added"] for p in all_purchases if p["created_at"][:10] == today)
+
+    # Paying users
+    paying_users = len(set(p["user_id"] for p in all_purchases if p["amount_paid"] > 0))
+    avg_revenue_per_user = total_revenue / paying_users if paying_users else 0
+
+    # Questions
+    all_usage       = db.table("usage_log").select("*").execute().data
+    total_questions = len(all_usage)
+    questions_today = len([q for q in all_usage if q["created_at"][:10] == today])
+    questions_week  = len([q for q in all_usage if q["created_at"] >= week_ago])
+
+    # Questions by day (last 7)
+    from collections import defaultdict
+    q_by_day = defaultdict(int)
+    for q in all_usage:
+        q_by_day[q["created_at"][:10]] += 1
+    questions_by_day = []
+    for i in range(6, -1, -1):
+        d = (now - timedelta(days=i)).date().isoformat()
+        questions_by_day.append({"date": d, "count": q_by_day.get(d, 0)})
+    max_day = max((d["count"] for d in questions_by_day), default=1)
+
+    # Revenue by day (last 7)
+    r_by_day = defaultdict(lambda: {"revenue": 0, "credits": 0})
+    for p in all_purchases:
+        d = p["created_at"][:10]
+        r_by_day[d]["revenue"] += p["amount_paid"]
+        r_by_day[d]["credits"] += p["credits_added"]
+    revenue_by_day = []
+    for i in range(6, -1, -1):
+        d = (now - timedelta(days=i)).date().isoformat()
+        revenue_by_day.append({"date": d, **r_by_day.get(d, {"revenue": 0, "credits": 0})})
+
+    # Affiliates
+    codes = db.table("referral_codes").select("*").execute().data
+    total_affiliates = len(codes)
+    earnings = db.table("affiliate_earnings").select("amount").execute().data
+    payouts  = db.table("affiliate_payouts").select("amount").execute().data
+    total_affiliate_owed = sum(e["amount"] for e in earnings) - sum(p["amount"] for p in payouts)
+
+    # Recent users
+    recent_users = sorted(all_users, key=lambda u: u["created_at"], reverse=True)[:10]
+
+    return render_template_string(ANALYTICS_HTML,
+        total_users=total_users,
+        new_users_today=new_users_today,
+        new_users_week=new_users_week,
+        total_revenue=total_revenue,
+        revenue_today=revenue_today,
+        revenue_week=revenue_week,
+        total_credits_sold=total_credits_sold,
+        credits_today=credits_today,
+        paying_users=paying_users,
+        avg_revenue_per_user=avg_revenue_per_user,
+        total_questions=total_questions,
+        questions_today=questions_today,
+        questions_week=questions_week,
+        questions_by_day=questions_by_day,
+        max_day=max_day,
+        revenue_by_day=revenue_by_day,
+        total_affiliates=total_affiliates,
+        total_affiliate_owed=max(total_affiliate_owed, 0),
+        recent_users=recent_users,
+    )
 <!DOCTYPE html>
 <html>
 <head><title>Admin Login</title>
