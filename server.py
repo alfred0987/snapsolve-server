@@ -104,7 +104,8 @@ def register():
 
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     res    = db.table("users").insert({
-        "email": email, "password_hash": hashed, "credits": 5
+        "email": email, "password_hash": hashed, "credits": 5,
+        "tos_agreed": datetime.utcnow().isoformat()
     }).execute()
 
     user  = res.data[0]
@@ -135,8 +136,13 @@ def login():
     return ok({"token": token, "credits": user["credits"], "email": email})
 
 
-@app.route("/me", methods=["GET"])
-def me():
+@app.route("/question-count", methods=["GET"])
+def question_count():
+    try:
+        res = db.table("usage_log").select("id", count="exact").execute()
+        return ok({"count": res.count or 0})
+    except:
+        return ok({"count": 0})
     user_id = verify_token(request)
     if not user_id:
         return err("Unauthorized", 401)
@@ -438,9 +444,10 @@ def submit_review():
     if not user_id:
         return err("Unauthorized", 401)
 
-    body    = request.json or {}
-    review  = (body.get("review") or "").strip()
-    rating  = int(body.get("rating") or 5)
+    body         = request.json or {}
+    review       = (body.get("review") or "").strip()
+    rating       = int(body.get("rating") or 5)
+    display_name = (body.get("display_name") or "").strip()
 
     if not review:
         return err("Review cannot be empty")
@@ -450,11 +457,12 @@ def submit_review():
     user = get_user(user_id)
 
     db.table("reviews").insert({
-        "user_id":  user_id,
-        "email":    user["email"],
-        "review":   review,
-        "rating":   rating,
-        "approved": False
+        "user_id":      user_id,
+        "email":        user["email"],
+        "review":       review,
+        "rating":       rating,
+        "display_name": display_name if display_name else None,
+        "approved":     False
     }).execute()
 
     return ok({"message": "Thanks for your feedback! Your review will appear after approval."})
@@ -677,12 +685,18 @@ ADMIN_HTML = """
   </form>
   {% if users %}
   <table>
-    <tr><th>Email</th><th>Credits</th><th>Joined</th></tr>
+    <tr><th>Email</th><th>Credits</th><th>Joined</th><th>Action</th></tr>
     {% for u in users %}
     <tr>
       <td>{{ u.email }}</td>
       <td><span class="badge">{{ u.credits }}</span></td>
       <td>{{ u.created_at[:10] }}</td>
+      <td>
+        <form method="POST" action="/admin/delete-user" style="margin:0;">
+          <input type="hidden" name="email" value="{{ u.email }}" />
+          <button type="submit" class="btn-sm btn-red" onclick="return confirm('Delete {{ u.email }}? This cannot be undone.')">Delete</button>
+        </form>
+      </td>
     </tr>
     {% endfor %}
   </table>
@@ -738,17 +752,23 @@ ADMIN_HTML = """
   <h2>📥 Referral Signups</h2>
   <p style="color:#64748b; font-size:13px; margin-bottom:12px;">Who signed up using each affiliate code.</p>
   <table>
-    <tr><th>Affiliate Code</th><th>Affiliate Email</th><th>New User Email</th><th>Date</th></tr>
+    <tr><th>Affiliate Code</th><th>Affiliate Email</th><th>New User Email</th><th>Date</th><th>Action</th></tr>
     {% for s in referral_signups %}
     <tr>
       <td><span class="badge badge-yellow">{{ s.code }}</span></td>
       <td>{{ s.affiliate_email }}</td>
       <td>{{ s.user_email }}</td>
       <td>{{ s.created_at[:10] }}</td>
+      <td>
+        <form method="POST" action="/admin/delete-referral-code" style="margin:0;">
+          <input type="hidden" name="code_id" value="{{ s.code_id }}" />
+          <button type="submit" class="btn-sm btn-red" onclick="return confirm('Delete this referral code?')">Delete Code</button>
+        </form>
+      </td>
     </tr>
     {% endfor %}
     {% if not referral_signups %}
-    <tr><td colspan="4" style="color:#334155;">No signups yet.</td></tr>
+    <tr><td colspan="5" style="color:#334155;">No signups yet.</td></tr>
     {% endif %}
   </table>
 </div>
@@ -793,7 +813,10 @@ ADMIN_HTML = """
           <button type="submit" class="btn-sm" style="background:#16a34a; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:12px;">Approve</button>
         </form>
         {% else %}
-        <span style="color:#16a34a; font-size:12px; font-weight:600;">✓ Live</span>
+        <form method="POST" action="/admin/unapprove-review" style="margin:0; display:inline;">
+          <input type="hidden" name="review_id" value="{{ r.id }}" />
+          <button type="submit" class="btn-sm" style="background:#d97706; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:12px;">Unpublish</button>
+        </form>
         {% endif %}
         <form method="POST" action="/admin/delete-review" style="margin:0; display:inline; margin-left:6px;">
           <input type="hidden" name="review_id" value="{{ r.id }}" />
@@ -881,6 +904,7 @@ def admin():
                 "user_email":      user.data["email"] if user.data else "unknown",
                 "affiliate_email": code.data["owner_email"] if code.data else "unknown",
                 "code":            code.data["code"] if code.data else "unknown",
+                "code_id":         l["referral_code_id"],
                 "created_at":      l["created_at"]
             })
         except:
@@ -937,6 +961,15 @@ def admin_approve_review():
     return redirect("/admin?msg=Review+approved&type=ok")
 
 
+@app.route("/admin/unapprove-review", methods=["POST"])
+def admin_unapprove_review():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+    review_id = request.form.get("review_id")
+    db.table("reviews").update({"approved": False}).eq("id", review_id).execute()
+    return redirect("/admin?msg=Review+unpublished&type=ok")
+
+
 @app.route("/admin/delete-review", methods=["POST"])
 def admin_delete_review():
     if not session.get("admin"):
@@ -944,6 +977,29 @@ def admin_delete_review():
     review_id = request.form.get("review_id")
     db.table("reviews").delete().eq("id", review_id).execute()
     return redirect("/admin?msg=Review+deleted&type=ok")
+
+
+@app.route("/admin/delete-referral-code", methods=["POST"])
+def admin_delete_referral_code():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+    code_id = request.form.get("code_id")
+    db.table("referral_codes").delete().eq("id", code_id).execute()
+    return redirect("/admin?msg=Referral+code+deleted&type=ok")
+
+
+@app.route("/admin/delete-user", methods=["POST"])
+def admin_delete_user():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+    email = (request.form.get("email") or "").strip().lower()
+    res = db.table("users").select("*").eq("email", email).execute()
+    if not res.data:
+        return redirect("/admin?msg=User+not+found&type=err")
+    user_id = res.data[0]["id"]
+    db.table("users").update({"deleted_at": datetime.utcnow().isoformat()}).eq("id", user_id).execute()
+    print(f"✅ Admin deleted user {email}")
+    return redirect(f"/admin?msg=User+{email}+deleted&type=ok")
 
 
 @app.route("/admin/create-referral-code", methods=["POST"])
