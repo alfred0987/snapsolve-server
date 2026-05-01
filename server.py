@@ -984,6 +984,8 @@ def admin_delete_referral_code():
     if not session.get("admin"):
         return redirect("/admin/login")
     code_id = request.form.get("code_id")
+    # Delete referral links first to avoid foreign key constraint
+    db.table("referral_links").delete().eq("referral_code_id", code_id).execute()
     db.table("referral_codes").delete().eq("id", code_id).execute()
     return redirect("/admin?msg=Referral+code+deleted&type=ok")
 
