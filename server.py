@@ -1090,6 +1090,7 @@ ANALYTICS_HTML = """
 <html>
 <head>
 <title>SnapTutor Analytics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:'Segoe UI',sans-serif; background:#0f172a; color:#e2e8f0; min-height:100vh; padding:32px; }
@@ -1100,31 +1101,33 @@ ANALYTICS_HTML = """
   .nav a:hover { color:#e8ff47; border-color:#e8ff47; }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:32px; }
   .stat { background:#1e293b; border-radius:12px; padding:24px; }
-  .stat-num { font-size:42px; font-weight:800; color:#e8ff47; line-height:1; margin-bottom:4px; font-family:'Segoe UI',sans-serif; }
+  .stat-num { font-size:42px; font-weight:800; color:#e8ff47; line-height:1; margin-bottom:4px; }
   .stat-label { font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.1em; }
   .stat-sub { font-size:12px; color:#334155; margin-top:4px; }
   .card { background:#1e293b; border-radius:12px; padding:24px; margin-bottom:16px; }
-  .card h2 { font-size:14px; color:#94a3b8; margin-bottom:16px; text-transform:uppercase; letter-spacing:0.1em; }
+  .card-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+  .card-title { font-size:14px; color:#94a3b8; text-transform:uppercase; letter-spacing:0.1em; }
+  .toggles { display:flex; gap:4px; }
+  .toggle-btn { background:none; border:1px solid #1e2a3a; color:#64748b; padding:5px 12px; font-size:12px; cursor:pointer; border-radius:6px; font-family:'Segoe UI',sans-serif; transition:all 0.15s; }
+  .toggle-btn.active { background:#e8ff47; border-color:#e8ff47; color:#000; font-weight:700; }
+  .toggle-btn:hover:not(.active) { border-color:#e8ff47; color:#e8ff47; }
+  canvas { max-height:260px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { text-align:left; color:#64748b; padding:8px 12px; border-bottom:1px solid #334155; }
   td { padding:10px 12px; border-bottom:1px solid #1a2535; }
-  .bar-wrap { background:#0f172a; border-radius:4px; height:8px; flex:1; overflow:hidden; }
-  .bar { height:100%; background:#e8ff47; border-radius:4px; transition:width 0.5s; }
-  .row-bar { display:flex; align-items:center; gap:12px; }
   .green { color:#4ade80; }
   .yellow { color:#e8ff47; }
 </style>
 </head>
 <body>
-<h1>⚡ Analytics</h1>
+<h1>Analytics</h1>
 <p class="sub">SnapTutor business overview</p>
 
 <div class="nav">
-  <a href="/admin">← Admin Panel</a>
-  <a href="/admin/analytics">↻ Refresh</a>
+  <a href="/admin">Admin Panel</a>
+  <a href="/admin/analytics">Refresh</a>
 </div>
 
-<!-- Top stats -->
 <div class="grid">
   <div class="stat">
     <div class="stat-num">{{ total_users }}</div>
@@ -1158,43 +1161,35 @@ ANALYTICS_HTML = """
   </div>
 </div>
 
-<!-- Questions per day -->
+<!-- Questions chart -->
 <div class="card">
-  <h2>📊 Questions per day (last 7 days)</h2>
-  <table>
-    <tr><th>Date</th><th>Questions</th><th></th></tr>
-    {% for d in questions_by_day %}
-    <tr>
-      <td>{{ d.date }}</td>
-      <td class="yellow">{{ d.count }}</td>
-      <td style="width:50%">
-        <div class="row-bar">
-          <div class="bar-wrap"><div class="bar" style="width:{{ [d.count * 100 // (max_day or 1), 100]|min }}%"></div></div>
-        </div>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="card-header">
+    <div class="card-title">Questions per day</div>
+    <div class="toggles">
+      <button class="toggle-btn active" onclick="loadChart('questions','7')">7 Days</button>
+      <button class="toggle-btn" onclick="loadChart('questions','30')">30 Days</button>
+      <button class="toggle-btn" onclick="loadChart('questions','all')">All Time</button>
+    </div>
+  </div>
+  <canvas id="questions-chart"></canvas>
 </div>
 
-<!-- Revenue per day -->
+<!-- Revenue chart -->
 <div class="card">
-  <h2>💰 Revenue per day (last 7 days)</h2>
-  <table>
-    <tr><th>Date</th><th>Revenue</th><th>Credits Sold</th></tr>
-    {% for d in revenue_by_day %}
-    <tr>
-      <td>{{ d.date }}</td>
-      <td class="green">${{ "%.2f"|format(d.revenue) }}</td>
-      <td>{{ d.credits }}</td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="card-header">
+    <div class="card-title">Revenue per day</div>
+    <div class="toggles">
+      <button class="toggle-btn active" onclick="loadChart('revenue','7')">7 Days</button>
+      <button class="toggle-btn" onclick="loadChart('revenue','30')">30 Days</button>
+      <button class="toggle-btn" onclick="loadChart('revenue','all')">All Time</button>
+    </div>
+  </div>
+  <canvas id="revenue-chart"></canvas>
 </div>
 
 <!-- Recent signups -->
 <div class="card">
-  <h2>👥 Recent signups</h2>
+  <div class="card-header"><div class="card-title">Recent signups</div></div>
   <table>
     <tr><th>Email</th><th>Credits</th><th>Joined</th></tr>
     {% for u in recent_users %}
@@ -1207,9 +1202,123 @@ ANALYTICS_HTML = """
   </table>
 </div>
 
+<script>
+const chartDefaults = {
+  responsive: true,
+  maintainAspectRatio: true,
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: '#0d1826',
+      borderColor: '#1e2a3a',
+      borderWidth: 1,
+      titleColor: '#94a3b8',
+      bodyColor: '#e8ff47',
+      padding: 10,
+    }
+  },
+  scales: {
+    x: { grid: { color: '#1e2a3a' }, ticks: { color: '#64748b', maxTicksLimit: 10 } },
+    y: { grid: { color: '#1e2a3a' }, ticks: { color: '#64748b' }, beginAtZero: true }
+  }
+};
+
+let qChart = null;
+let rChart = null;
+
+async function loadChart(type, days) {
+  // Update toggle buttons
+  const cardIdx = type === 'questions' ? 0 : 1;
+  document.querySelectorAll('.card')[cardIdx].querySelectorAll('.toggle-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.trim().startsWith(days === '7' ? '7' : days === '30' ? '30' : 'All'));
+  });
+
+  const res  = await fetch('/admin/analytics-data?type=' + type + '&days=' + days);
+  const data = await res.json();
+
+  const color   = type === 'questions' ? '#e8ff47' : '#4ade80';
+  const bgColor = type === 'questions' ? 'rgba(232,255,71,0.08)' : 'rgba(74,222,128,0.08)';
+
+  const cfg = {
+    type: 'line',
+    data: {
+      labels: data.labels,
+      datasets: [{
+        data: data.values,
+        borderColor: color,
+        backgroundColor: bgColor,
+        borderWidth: 2,
+        pointRadius: data.labels.length > 30 ? 0 : 3,
+        pointHoverRadius: 5,
+        pointBackgroundColor: color,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: chartDefaults
+  };
+
+  if (type === 'questions') {
+    if (qChart) qChart.destroy();
+    qChart = new Chart(document.getElementById('questions-chart'), cfg);
+  } else {
+    if (rChart) rChart.destroy();
+    rChart = new Chart(document.getElementById('revenue-chart'), cfg);
+  }
+}
+
+loadChart('questions', '7');
+loadChart('revenue', '7');
+</script>
 </body>
 </html>
 """
+
+@app.route("/admin/analytics-data", methods=["GET"])
+def admin_analytics_data():
+    if not session.get("admin"):
+        return err("Unauthorized", 401)
+
+    from collections import defaultdict
+    data_type = request.args.get("type", "questions")
+    days      = request.args.get("days", "7")
+    now       = datetime.utcnow()
+
+    if days == "7":
+        num_days = 7
+    elif days == "30":
+        num_days = 30
+    else:
+        num_days = None  # all time
+
+    if data_type == "questions":
+        all_data = db.table("usage_log").select("created_at").execute().data
+        by_day   = defaultdict(int)
+        for q in all_data:
+            by_day[q["created_at"][:10]] += 1
+    else:
+        all_data = db.table("purchases").select("created_at, amount_paid").execute().data
+        by_day   = defaultdict(float)
+        for p in all_data:
+            by_day[p["created_at"][:10]] += p["amount_paid"]
+
+    if num_days:
+        dates = [(now - timedelta(days=i)).date().isoformat() for i in range(num_days-1, -1, -1)]
+    else:
+        if by_day:
+            from datetime import date
+            min_date = min(by_day.keys())
+            start    = datetime.strptime(min_date, "%Y-%m-%d")
+            delta    = (now - start).days + 1
+            dates    = [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta)]
+        else:
+            dates = [(now - timedelta(days=i)).date().isoformat() for i in range(6, -1, -1)]
+
+    labels = dates
+    values = [round(by_day.get(d, 0), 2) for d in dates]
+
+    return ok({"labels": labels, "values": values})
+
 
 @app.route("/admin/analytics", methods=["GET"])
 def admin_analytics():
@@ -1240,32 +1349,10 @@ def admin_analytics():
     avg_revenue_per_user = total_revenue / paying_users if paying_users else 0
 
     # Questions
-    all_usage       = db.table("usage_log").select("*").execute().data
+    all_usage       = db.table("usage_log").select("created_at").execute().data
     total_questions = len(all_usage)
     questions_today = len([q for q in all_usage if q["created_at"][:10] == today])
     questions_week  = len([q for q in all_usage if q["created_at"] >= week_ago])
-
-    # Questions by day (last 7)
-    from collections import defaultdict
-    q_by_day = defaultdict(int)
-    for q in all_usage:
-        q_by_day[q["created_at"][:10]] += 1
-    questions_by_day = []
-    for i in range(6, -1, -1):
-        d = (now - timedelta(days=i)).date().isoformat()
-        questions_by_day.append({"date": d, "count": q_by_day.get(d, 0)})
-    max_day = max((d["count"] for d in questions_by_day), default=1)
-
-    # Revenue by day (last 7)
-    r_by_day = defaultdict(lambda: {"revenue": 0, "credits": 0})
-    for p in all_purchases:
-        d = p["created_at"][:10]
-        r_by_day[d]["revenue"] += p["amount_paid"]
-        r_by_day[d]["credits"] += p["credits_added"]
-    revenue_by_day = []
-    for i in range(6, -1, -1):
-        d = (now - timedelta(days=i)).date().isoformat()
-        revenue_by_day.append({"date": d, **r_by_day.get(d, {"revenue": 0, "credits": 0})})
 
     # Affiliates
     codes = db.table("referral_codes").select("*").execute().data
@@ -1291,9 +1378,6 @@ def admin_analytics():
         total_questions=total_questions,
         questions_today=questions_today,
         questions_week=questions_week,
-        questions_by_day=questions_by_day,
-        max_day=max_day,
-        revenue_by_day=revenue_by_day,
         total_affiliates=total_affiliates,
         total_affiliate_owed=max(total_affiliate_owed, 0),
         recent_users=recent_users,
