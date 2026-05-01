@@ -386,7 +386,7 @@ def forgot_password():
         "expires_at": expiry
     }).execute()
 
-    reset_url = f"https://thesnaptutor.netlify.app/reset.html?token={token}"
+    reset_url = f"https://thesnaptutor.com/reset.html?token={token}"
 
     html = f"""
     <div style="font-family: 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
