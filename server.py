@@ -338,9 +338,9 @@ def pay_affiliate(user_id, purchase_id, amount_paid):
             "amount":            affiliate_cut
         }).execute()
 
-        print(f"💸 Affiliate cut: {affiliate_cut} to {affiliate_user_id} for purchase {purchase_id}")
+        print(f" Affiliate cut: {affiliate_cut} to {affiliate_user_id} for purchase {purchase_id}")
     except Exception as e:
-        print(f"⚠️ Affiliate payment error: {e}")
+        print(f"⚠ Affiliate payment error: {e}")
 
 
 # ── Email helper ───────────────────────────────────────────────────────────────
@@ -357,7 +357,7 @@ def send_email(to, subject, body_html):
             server.sendmail(GMAIL_USER, to, msg.as_string())
         return True
     except Exception as e:
-        print(f"⚠️ Email error: {e}")
+        print(f"⚠ Email error: {e}")
         return False
 
 
@@ -405,7 +405,7 @@ def forgot_password():
 
     # Email sending blocked on Render free tier — direct to support
     # send_email(email, "Reset your Snap Tutor password", html)
-    print(f"📧 Password reset requested for {email} — token: {token}")
+    print(f" Password reset requested for {email} — token: {token}")
     return ok({"message": "Password reset emails are temporarily unavailable. Please email thesnaptutor@gmail.com with your account email and we'll reset it manually within 24 hours."})
 
 
@@ -604,7 +604,7 @@ def nowpayments_webhook():
         if purchase.data:
             pay_affiliate(user_id, purchase.data[0]["id"], amount)
 
-        print(f"💰 Crypto payment: user {user_id} +{credits} credits ({pack})")
+        print(f" Crypto payment: user {user_id} +{credits} credits ({pack})")
 
     return ok({"received": True})
 
@@ -1298,6 +1298,8 @@ def admin_analytics():
         total_affiliate_owed=max(total_affiliate_owed, 0),
         recent_users=recent_users,
     )
+
+ADMIN_LOGIN_HTML = """
 <!DOCTYPE html>
 <html>
 <head><title>Admin Login</title>
@@ -1345,6 +1347,6 @@ def health():
 
 
 if __name__ == "__main__":
-    print("🚀 SnapSolve server starting on http://localhost:5000")
+    print("SnapSolve server starting on http://localhost:5000")
     print("   Admin panel: http://localhost:5000/admin\n")
     app.run(debug=True, port=5000)
