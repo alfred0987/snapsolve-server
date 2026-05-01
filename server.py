@@ -402,8 +402,10 @@ def forgot_password():
     </div>
     """
 
-    send_email(email, "Reset your Snap Tutor password", html)
-    return ok({"message": "If that email exists you'll receive a reset link shortly."})
+    # Email sending blocked on Render free tier — direct to support
+    # send_email(email, "Reset your Snap Tutor password", html)
+    print(f"📧 Password reset requested for {email} — token: {token}")
+    return ok({"message": "Password reset emails are temporarily unavailable. Please email thesnaptutor@gmail.com with your account email and we'll reset it manually within 24 hours."})
 
 
 @app.route("/reset-password", methods=["POST"])
