@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 SnapSolve Backend Server
 Handles: auth, credits, Claude API, admin panel, Venmo manual payments, NOWPayments crypto
@@ -1311,7 +1312,7 @@ def admin_analytics():
 </head>
 <body>
 <div class="box">
-  <h1>⚡ Admin Login</h1>
+  <h1>SnapTutor Admin</h1>
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
   <form method="POST">
     <input type="password" name="password" placeholder="Admin password" autofocus />
@@ -1330,7 +1331,6 @@ def admin_login():
             return redirect("/admin")
         return render_template_string(ADMIN_LOGIN_HTML, error="Wrong password")
     return render_template_string(ADMIN_LOGIN_HTML, error=None)
-
 @app.route("/admin/logout")
 def admin_logout():
     session.pop("admin", None)
