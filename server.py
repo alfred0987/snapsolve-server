@@ -126,9 +126,9 @@ def stripe_webhook():
 
     if event["type"] == "checkout.session.completed":
         session  = event["data"]["object"]
-        metadata = session.get("metadata", {})
-        user_id  = metadata.get("user_id")
-        pack     = metadata.get("pack")
+        metadata = session.metadata
+        user_id  = metadata.user_id if hasattr(metadata, 'user_id') else None
+        pack     = metadata.pack if hasattr(metadata, 'pack') else None
 
         if not user_id or pack not in CREDIT_PACKS:
             return ok({"received": True})
@@ -143,7 +143,7 @@ def stripe_webhook():
             "user_id":           user_id,
             "credits_added":     credits,
             "amount_paid":       amount,
-            "stripe_session_id": session["id"]
+            "stripe_session_id": session.id
         }).execute()
 
         if purchase.data:
