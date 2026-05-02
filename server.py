@@ -30,13 +30,14 @@ from supabase import create_client
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "change-this-to-something-random")
-CORS(app, origins=[
-    "https://thesnaptutor.com",
-    "https://www.thesnaptutor.com",
-    "https://thesnaptutor.netlify.app",
-    "http://localhost:5000",
-    "http://127.0.0.1:5000"
-])
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    return response
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CONFIG — set these as environment variables in Render dashboard
@@ -150,6 +151,15 @@ def question_count():
         return ok({"count": res.count or 0})
     except:
         return ok({"count": 0})
+
+
+@app.route("/me", methods=["GET"])
+def me():
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+    user = get_user(user_id)
+    return ok({"credits": user["credits"], "email": user["email"]})
     user_id = verify_token(request)
     if not user_id:
         return err("Unauthorized", 401)
