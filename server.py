@@ -30,7 +30,13 @@ from supabase import create_client
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "change-this-to-something-random")
-CORS(app)
+CORS(app, origins=[
+    "https://thesnaptutor.com",
+    "https://www.thesnaptutor.com",
+    "https://thesnaptutor.netlify.app",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000"
+])
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CONFIG — set these as environment variables in Render dashboard
