@@ -23,6 +23,7 @@ import hmac
 import os
 import secrets
 import smtplib
+import stripe
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -53,6 +54,9 @@ VENMO_HANDLE           = os.environ.get("VENMO_HANDLE", "@your-venmo-handle")
 GMAIL_USER             = os.environ.get("GMAIL_USER", "thesnaptutor@gmail.com")
 GMAIL_APP_PASSWORD     = os.environ.get("GMAIL_APP_PASSWORD", "")
 YOUR_DOMAIN            = os.environ.get("YOUR_DOMAIN", "http://localhost:5000")
+STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
 # Credit packs
 CREDIT_PACKS = {
@@ -64,6 +68,104 @@ CREDIT_PACKS = {
 
 db = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+stripe.api_key = STRIPE_SECRET_KEY
+
+
+# ── Stripe payments ────────────────────────────────────────────────────────────
+
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout_session():
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+
+    body = request.json or {}
+    pack = body.get("pack")
+    if pack not in CREDIT_PACKS:
+        return err("Invalid pack")
+
+    p    = CREDIT_PACKS[pack]
+    user = get_user(user_id)
+
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {
+                    "name": f"Snap Tutor {p['label']}",
+                    "description": f"{p['credits']} AI study credits"
+                },
+                "unit_amount": int(p["price"] * 100),
+            },
+            "quantity": 1,
+        }],
+        mode="payment",
+        success_url="https://thesnaptutor.com/?payment=success",
+        cancel_url="https://thesnaptutor.com/?payment=cancel",
+        metadata={
+            "user_id": user_id,
+            "pack": pack,
+            "email": user["email"]
+        },
+        customer_email=user["email"],
+    )
+
+    return ok({"url": session.url})
+
+
+@app.route("/stripe-webhook", methods=["POST"])
+def stripe_webhook():
+    payload = request.data
+    sig     = request.headers.get("Stripe-Signature", "")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+    except Exception as e:
+        return err(str(e), 400)
+
+    if event["type"] == "checkout.session.completed":
+        session  = event["data"]["object"]
+        metadata = session.get("metadata", {})
+        user_id  = metadata.get("user_id")
+        pack     = metadata.get("pack")
+
+        if not user_id or pack not in CREDIT_PACKS:
+            return ok({"received": True})
+
+        credits = CREDIT_PACKS[pack]["credits"]
+        amount  = CREDIT_PACKS[pack]["price"]
+        user    = get_user(user_id)
+
+        new_credits = user["credits"] + credits
+        db.table("users").update({"credits": new_credits}).eq("id", user_id).execute()
+        purchase = db.table("purchases").insert({
+            "user_id":           user_id,
+            "credits_added":     credits,
+            "amount_paid":       amount,
+            "stripe_session_id": session["id"]
+        }).execute()
+
+        if purchase.data:
+            pay_affiliate(user_id, purchase.data[0]["id"], amount)
+            pay_madeline(amount)
+
+        print(f"Stripe payment: user {user_id} +{credits} credits ({pack})")
+
+    return ok({"received": True})
+
+
+def pay_madeline(amount_paid):
+    """Track 5% cut for Madeline on every Stripe payment."""
+    try:
+        madeline_cut = round(amount_paid * 0.05, 2)
+        db.table("madeline_earnings").insert({
+            "amount_paid": amount_paid,
+            "cut":         madeline_cut
+        }).execute()
+        print(f"Madeline cut: ${madeline_cut}")
+    except Exception as e:
+        print(f"Madeline tracking error: {e}")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -676,6 +778,31 @@ ADMIN_HTML = """
 <div class="msg {{ msg_type }}">{{ msg }}</div>
 {% endif %}
 
+<!-- Madeline's cut -->
+<div class="card">
+  <h2>👩 Madeline's 5% Cut</h2>
+  <p style="color:#64748b; font-size:13px; margin-bottom:16px;">5% of every Stripe payment owed to Madeline.</p>
+  <div class="bank-card">
+    <div>
+      <div class="bank-email">Madeline</div>
+      <div class="bank-code">Account Representative</div>
+      <div class="bank-meta">{{ madeline_total_sales }} Stripe sales</div>
+    </div>
+    <div style="text-align:right;">
+      <div class="bank-owed {% if madeline_owed == 0 %}zero{% endif %}">${{ "%.2f"|format(madeline_owed) }}</div>
+      <div class="bank-meta">lifetime earned: ${{ "%.2f"|format(madeline_lifetime) }}</div>
+    </div>
+    {% if madeline_owed > 0 %}
+    <form method="POST" action="/admin/pay-madeline" style="margin:0;">
+      <input type="hidden" name="amount" value="{{ madeline_owed }}" />
+      <button type="submit" class="btn-red btn-sm">Mark Paid (${{ "%.2f"|format(madeline_owed) }})</button>
+    </form>
+    {% else %}
+    <span style="font-size:12px; color:#334155; font-weight:600;">ALL PAID</span>
+    {% endif %}
+  </div>
+</div>
+
 <!-- Manual Payments -->
 <div class="card">
   <h2>📱 Add Credits (Venmo Payment)</h2>
@@ -962,13 +1089,38 @@ def admin():
 
     reviews = db.table("reviews").select("*").order("created_at", desc=True).execute().data
 
+    # Madeline's cut
+    try:
+        madeline_earnings = db.table("madeline_earnings").select("*").execute().data
+        madeline_payouts  = db.table("madeline_payouts").select("*").execute().data
+        madeline_lifetime = sum(e["cut"] for e in madeline_earnings)
+        madeline_paid     = sum(p["amount"] for p in madeline_payouts) if madeline_payouts else 0
+        madeline_owed     = max(round(madeline_lifetime - madeline_paid, 2), 0)
+        madeline_total_sales = len(madeline_earnings)
+    except:
+        madeline_lifetime = madeline_owed = madeline_paid = 0
+        madeline_total_sales = 0
+
     return render_template_string(ADMIN_HTML,
         users=users, search=search, purchases=purchases,
         affiliate_earnings=affiliate_earnings,
         referral_signups=referral_signups,
         affiliate_balances=affiliate_balances,
         reviews=reviews,
+        madeline_owed=madeline_owed,
+        madeline_lifetime=madeline_lifetime,
+        madeline_total_sales=madeline_total_sales,
         msg=msg, msg_type=msg_type, venmo=VENMO_HANDLE)
+
+
+@app.route("/admin/pay-madeline", methods=["POST"])
+def admin_pay_madeline():
+    if not session.get("admin"):
+        return redirect("/admin/login")
+    amount = float(request.form.get("amount") or 0)
+    db.table("madeline_payouts").insert({"amount": amount}).execute()
+    print(f"Paid Madeline ${amount}")
+    return redirect("/admin?msg=Madeline+marked+as+paid&type=ok")
 
 
 @app.route("/admin/approve-review", methods=["POST"])
