@@ -280,8 +280,9 @@ def solve_free():
 
     user = get_user(user_id)
 
-    # Only allow if user has exactly 5 credits (fresh signup)
-    if user["credits"] != 5:
+    # Only allow if user has never made a purchase (truly new)
+    purchases = db.table("purchases").select("id").eq("user_id", user_id).execute()
+    if purchases.data:
         return err("Free solve only available for new accounts", 403)
 
     body    = request.json or {}
@@ -339,6 +340,14 @@ Rules:
 
     except Exception as e:
         return err(f"AI error: {str(e)}")
+
+
+# ── Solve ──────────────────────────────────────────────────────────────────────
+
+@app.route("/solve", methods=["POST", "OPTIONS"])
+def solve():
+    if request.method == "OPTIONS":
+        return ok({})
     user_id = verify_token(request)
     if not user_id:
         return err("Unauthorized", 401)
