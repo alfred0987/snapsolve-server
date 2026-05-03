@@ -308,11 +308,30 @@ Rules:
 - ANSWER for multiple choice = exactly A, B, C, or D only — never the answer text
 - For 2x2 grid layouts: top-left=A, top-right=B, bottom-left=C, bottom-right=D"""
 
+        # Detect media type from base64 header or default to jpeg
+        media_type = "image/png"
+        if img_b64.startswith("/9j/") or img_b64.startswith("iVBORw0KGgo") is False:
+            media_type = "image/jpeg"
+        # More reliable detection
+        try:
+            import base64 as b64mod
+            header = b64mod.b64decode(img_b64[:16])
+            if header[:2] == b'\xff\xd8':
+                media_type = "image/jpeg"
+            elif header[:8] == b'\x89PNG\r\n\x1a\n':
+                media_type = "image/png"
+            elif header[:6] in (b'GIF87a', b'GIF89a'):
+                media_type = "image/gif"
+            else:
+                media_type = "image/jpeg"
+        except:
+            media_type = "image/jpeg"
+
         response = ai.messages.create(
             model="claude-opus-4-5",
             max_tokens=300,
             messages=[{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_b64}},
                 {"type": "text",  "text": prompt}
             ]}]
         )
