@@ -271,8 +271,74 @@ def me():
 
 # ── Solve ──────────────────────────────────────────────────────────────────────
 
-@app.route("/solve", methods=["POST"])
-def solve():
+@app.route("/solve-free", methods=["POST"])
+def solve_free():
+    """First solve after signup - no credits deducted."""
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+
+    user = get_user(user_id)
+
+    # Only allow if user has exactly 5 credits (fresh signup)
+    if user["credits"] != 5:
+        return err("Free solve only available for new accounts", 403)
+
+    body    = request.json or {}
+    img_b64 = body.get("image")
+    if not img_b64:
+        return err("No image provided")
+
+    try:
+        prompt = """You are a fast, accurate academic quiz solver.
+
+Look at this screenshot of a question. Determine the type and answer it.
+
+IF MULTIPLE CHOICE (any labeled answer options exist — A/B/C/D, bubbles, buttons, numbered choices):
+TYPE: multiple_choice
+ANSWER: B
+EXPLANATION: One sentence why.
+CONFIDENCE: 95
+
+IF OPEN ENDED (student must type a free response with no provided options):
+TYPE: open_ended
+ANSWER: the direct answer
+EXPLANATION: One short sentence of context.
+CONFIDENCE: 90
+
+Rules:
+- Start with TYPE: immediately, nothing before it
+- ANSWER for multiple choice = exactly A, B, C, or D only — never the answer text
+- For 2x2 grid layouts: top-left=A, top-right=B, bottom-left=C, bottom-right=D"""
+
+        # Detect media type
+        try:
+            import base64 as b64mod
+            header = b64mod.b64decode(img_b64[:16])
+            if header[:2] == b'\xff\xd8':
+                media_type = "image/jpeg"
+            elif header[:8] == b'\x89PNG\r\n\x1a\n':
+                media_type = "image/png"
+            else:
+                media_type = "image/jpeg"
+        except:
+            media_type = "image/jpeg"
+
+        response = ai.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=300,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_b64}},
+                {"type": "text",  "text": prompt}
+            ]}]
+        )
+
+        raw = response.content[0].text.strip()
+        print(f"Free solve for new user {user_id}")
+        return ok({"raw": raw, "credits_remaining": user["credits"]})
+
+    except Exception as e:
+        return err(f"AI error: {str(e)}")
     user_id = verify_token(request)
     if not user_id:
         return err("Unauthorized", 401)
