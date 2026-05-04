@@ -417,6 +417,90 @@ Rules:
         return err(f"AI error: {str(e)}")
 
 
+@app.route("/study", methods=["POST", "OPTIONS"])
+def study():
+    if request.method == "OPTIONS":
+        return ok({})
+
+    user_id = verify_token(request)
+    if not user_id:
+        return err("Unauthorized", 401)
+
+    user = get_user(user_id)
+
+    body       = request.json or {}
+    img_b64    = body.get("image")
+    doc_b64    = body.get("doc")
+    doc_type   = body.get("doc_type", "application/pdf")
+    user_prompt = (body.get("prompt") or "").strip()
+
+    is_doc = bool(doc_b64)
+    cost   = 3 if is_doc else 1
+
+    if user["credits"] < cost:
+        return err(f"Not enough credits. This requires {cost} credits.", 402)
+
+    try:
+        focus = f"\n\nThe student wants to focus on: {user_prompt}" if user_prompt else ""
+
+        prompt = f"""You are an expert tutor. A student has uploaded study material for you to explain.
+
+Your job is to:
+1. Identify the key topics and concepts
+2. Explain each one clearly with bullet points
+3. Give a brief example for important concepts
+4. End with a quick summary of the most important takeaways
+
+Format your response like this:
+**Key Topics:**
+• Topic 1 — explanation
+• Topic 2 — explanation
+
+**Important Concepts:**
+• Concept — clear explanation with example if helpful
+
+**Key Takeaways:**
+• Most important things to remember{focus}
+
+Be thorough but concise. Use simple language a student can understand."""
+
+        # Detect media type for images
+        if img_b64:
+            try:
+                import base64 as b64mod
+                header = b64mod.b64decode(img_b64[:16])
+                media_type = "image/jpeg" if header[:2] == b'\xff\xd8' else "image/png"
+            except:
+                media_type = "image/jpeg"
+
+            content = [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_b64}},
+                {"type": "text", "text": prompt}
+            ]
+        else:
+            content = [
+                {"type": "document", "source": {"type": "base64", "media_type": doc_type, "data": doc_b64}},
+                {"type": "text", "text": prompt}
+            ]
+
+        response = ai.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": content}]
+        )
+
+        summary     = response.content[0].text.strip()
+        new_credits = user["credits"] - cost
+        db.table("users").update({"credits": new_credits}).eq("id", user_id).execute()
+        db.table("usage_log").insert({"user_id": user_id}).execute()
+
+        print(f"Study: user {user_id} -{cost} credits ({new_credits} left)")
+        return ok({"summary": summary, "credits_remaining": new_credits})
+
+    except Exception as e:
+        return err(f"AI error: {str(e)}")
+
+
 # ── Referral system ────────────────────────────────────────────────────────────
 
 @app.route("/apply-referral", methods=["POST"])
