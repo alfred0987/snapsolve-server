@@ -66,11 +66,28 @@ CREDIT_PACKS = {
 }
 # ══════════════════════════════════════════════════════════════════════════════
 
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1501397774170722375/sjgtHPclt4KvcZCLMxsv966fiFLOoYNIRwjEoOBngWWbStcVILyj4Lqo8qEG9WRcH6Ir"
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
 
 db = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 stripe.api_key = STRIPE_SECRET_KEY
+
+# ── Rate limiting ──────────────────────────────────────────────────────────────
+from collections import defaultdict
+import time
+
+login_attempts = defaultdict(list)
+
+def check_rate_limit(ip, max_attempts=10, window=300):
+    """Allow max_attempts per window seconds per IP."""
+    now = time.time()
+    attempts = login_attempts[ip]
+    # Remove old attempts outside window
+    login_attempts[ip] = [t for t in attempts if now - t < window]
+    if len(login_attempts[ip]) >= max_attempts:
+        return False
+    login_attempts[ip].append(now)
+    return True
 
 def discord_notify(message):
     try:
@@ -236,6 +253,10 @@ def register():
 
 @app.route("/login", methods=["POST"])
 def login():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+    if not check_rate_limit(ip):
+        return err("Too many login attempts. Try again in 5 minutes.", 429)
+
     body     = request.json or {}
     email    = (body.get("email") or "").strip().lower()
     password = body.get("password") or ""
