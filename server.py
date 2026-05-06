@@ -66,9 +66,13 @@ CREDIT_PACKS = {
 }
 # ══════════════════════════════════════════════════════════════════════════════
 
-db = create_client(SUPABASE_URL, SUPABASE_KEY)
-ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-stripe.api_key = STRIPE_SECRET_KEY
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1501397774170722375/sjgtHPclt4KvcZCLMxsv966fiFLOoYNIRwjEoOBngWWbStcVILyj4Lqo8qEG9WRcH6Ir"
+
+def discord_notify(message):
+    try:
+        requests.post(DISCORD_WEBHOOK, json={"content": message}, timeout=5)
+    except:
+        pass
 
 
 # ── Stripe payments ────────────────────────────────────────────────────────────
@@ -150,6 +154,7 @@ def stripe_webhook():
             pay_affiliate(user_id, purchase.data[0]["id"], amount)
             pay_madeline(amount)
 
+        discord_notify(f"SALE! {CREDIT_PACKS[pack]['label']} — ${amount} from user {user_id}")
         print(f"Stripe payment: user {user_id} +{credits} credits ({pack})")
 
     return ok({"received": True})
@@ -220,7 +225,8 @@ def register():
 
     user  = res.data[0]
     token = make_token(user["id"])
-    print(f"✅ Registered: {email} (+5 free credits)")
+    discord_notify(f"New signup: {email}")
+    print(f"Registered: {email} (+5 free credits)")
     return ok({"token": token, "credits": 5, "email": email})
 
 
@@ -410,7 +416,10 @@ Rules:
         db.table("users").update({"credits": new_credits}).eq("id", user_id).execute()
         db.table("usage_log").insert({"user_id": user_id}).execute()
 
-        print(f"⚡ Solve: {user['email']} | {new_credits} credits left")
+        if new_credits == 0:
+            discord_notify(f"Out of credits: {user['email']} — hot lead!")
+
+        print(f"Solve: {user['email']} | {new_credits} credits left")
         return ok({"raw": raw, "credits_remaining": new_credits})
 
     except Exception as e:
