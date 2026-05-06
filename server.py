@@ -74,7 +74,7 @@ stripe.api_key = STRIPE_SECRET_KEY
 
 def discord_notify(message):
     try:
-        requests.post(DISCORD_WEBHOOK, json={"content": message}, timeout=5)
+        requests.post(DISCORD_WEBHOOK, json={"content": f"@here {message}"}, timeout=5)
     except:
         pass
 
