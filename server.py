@@ -68,6 +68,10 @@ CREDIT_PACKS = {
 
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1501397774170722375/sjgtHPclt4KvcZCLMxsv966fiFLOoYNIRwjEoOBngWWbStcVILyj4Lqo8qEG9WRcH6Ir"
 
+db = create_client(SUPABASE_URL, SUPABASE_KEY)
+ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+stripe.api_key = STRIPE_SECRET_KEY
+
 def discord_notify(message):
     try:
         requests.post(DISCORD_WEBHOOK, json={"content": message}, timeout=5)
